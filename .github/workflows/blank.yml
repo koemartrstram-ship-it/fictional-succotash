@@ -17,8 +17,7 @@ jobs:
 
     - name: Auth
       # Using the token you provided
-      run: .\ngrok\ngrok.exe authtoken 2lYIJEGho1ExHGjJGPOnyN8N2Cz_3hv74cinmWnjjYrmQ5PB2
-
+      run: .\ngrok\ngrok.exe authtoken 38y39UPD8p2Kx10SpeKQhfypgWt_89Xj6RgMt8GTGcMMpcwBP
     - name: Enable TS
       # Fixed syntax error (added space before -name)
       run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
