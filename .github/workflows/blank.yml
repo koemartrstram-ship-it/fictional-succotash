@@ -1,4 +1,4 @@
-name: SSH + RDP (Advanced)
+name: VNC Access (Stealth)
 
 on: 
   workflow_dispatch:
@@ -7,65 +7,44 @@ on:
         description: 'Duration (hours)'
         required: false
         default: '4'
+        type: choice
+        options:
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
 
 env:
   NGROK_TOKEN: 2lYIJEGho1ExHGjJGPOnyN8N2Cz_3hv74cinmWnjjYrmQ5PB2
-  SSH_PASSWORD: SSH@2026!
-  RDP_PASS: P@ssw0rd123!
+  VNC_PASSWORD: VNC@2026!
 
 jobs:
-  ssh-rdp:
+  vnc:
     runs-on: windows-latest
     timeout-minutes: 360
     
     steps:
-    - name: Setup OpenSSH Server
+    - name: Install VNC Server
       shell: pwsh
       run: |
-        Write-Host "🔧 Installing OpenSSH Server..." -ForegroundColor Cyan
+        Write-Host "📦 Installing TightVNC..." -ForegroundColor Cyan
         
-        # Install OpenSSH
-        Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+        # Download TightVNC
+        Invoke-WebRequest -Uri "https://www.tightvnc.com/download/2.8.84/tightvnc-2.8.84-gpl-setup-64bit.msi" -OutFile "tightvnc.msi"
         
-        # Start and configure SSH service
-        Start-Service sshd
-        Set-Service -Name sshd -StartupType 'Automatic'
+        # Silent install
+        Start-Process msiexec.exe -ArgumentList '/i', 'tightvnc.msi', '/quiet', '/norestart', "SET_USEVNCAUTHENTICATION=1", "VALUE_OF_USEVNCAUTHENTICATION=1", "SET_PASSWORD=1", "VALUE_OF_PASSWORD=$env:VNC_PASSWORD", "SET_USECONTROLAUTHENTICATION=1", "VALUE_OF_USECONTROLAUTHENTICATION=1", "SET_CONTROLPASSWORD=1", "VALUE_OF_CONTROLPASSWORD=$env:VNC_PASSWORD" -Wait
         
-        # Configure SSH
-        $sshdConfig = "C:\ProgramData\ssh\sshd_config"
-        (Get-Content $sshdConfig) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshdConfig
-        (Get-Content $sshdConfig) -replace '#PubkeyAuthentication yes', 'PubkeyAuthentication no' | Set-Content $sshdConfig
+        Write-Host "⏳ Waiting for VNC service to start..." -ForegroundColor Gray
+        Start-Sleep -Seconds 10
         
-        # Set password for runneradmin
-        $securePass = ConvertTo-SecureString $env:SSH_PASSWORD -AsPlainText -Force
-        Set-LocalUser -Name "runneradmin" -Password $securePass
+        # Start VNC service
+        Start-Service -Name "tvnserver" -ErrorAction SilentlyContinue
         
-        # Restart SSH
-        Restart-Service sshd
-        
-        # Allow SSH through firewall
-        New-NetFirewallRule -Name sshd -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 -ErrorAction SilentlyContinue
-        
-        Write-Host "✅ SSH Server ready" -ForegroundColor Green
+        Write-Host "✅ VNC Server installed and running" -ForegroundColor Green
     
-    - name: Setup RDP
-      shell: pwsh
-      run: |
-        Write-Host "🔧 Setting up RDP..." -ForegroundColor Cyan
-        
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0
-        
-        $secureRdpPass = ConvertTo-SecureString $env:RDP_PASS -AsPlainText -Force
-        Set-LocalUser -Name "runneradmin" -Password $secureRdpPass
-        
-        Restart-Service TermService -Force
-        Start-Sleep -Seconds 3
-        
-        Write-Host "✅ RDP ready" -ForegroundColor Green
-    
-    - name: Start Ngrok on SSH Port
+    - name: Start Ngrok Tunnel
       shell: pwsh
       run: |
         Write-Host "⬇️ Setting up ngrok..." -ForegroundColor Cyan
@@ -75,56 +54,64 @@ jobs:
         
         .\ngrok\ngrok.exe config add-authtoken $env:NGROK_TOKEN
         
-        Write-Host "🚀 Starting tunnel to SSH (port 22)..." -ForegroundColor Yellow
-        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 22" -WindowStyle Hidden
+        Write-Host "🚀 Starting tunnel to VNC (port 5900)..." -ForegroundColor Yellow
+        Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 5900" -WindowStyle Hidden
         
         Start-Sleep -Seconds 12
     
     - name: Get Connection Info
       shell: pwsh
       run: |
-        Write-Host "🔍 Getting SSH tunnel details..." -ForegroundColor Cyan
+        Write-Host "🔍 Getting connection details..." -ForegroundColor Cyan
+        
+        $found = $false
         
         for ($i = 1; $i -le 10; $i++) {
           try {
-            $api = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -TimeoutSec 2
+            $api = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -TimeoutSec 2 -ErrorAction Stop
             
-            if ($api.tunnels) {
+            if ($api.tunnels -and $api.tunnels.Count -gt 0) {
               $url = $api.tunnels[0].public_url -replace "tcp://", ""
               $parts = $url -split ":"
               
               Write-Host ""
               Write-Host "╔════════════════════════════════════════════╗" -ForegroundColor Green
               Write-Host "║                                            ║" -ForegroundColor Green
-              Write-Host "║      🎯 SSH TUNNEL + RDP READY!           ║" -ForegroundColor Green
+              Write-Host "║         🎯 VNC ACCESS READY!              ║" -ForegroundColor Green
               Write-Host "║                                            ║" -ForegroundColor Green
               Write-Host "╠════════════════════════════════════════════╣" -ForegroundColor Green
               Write-Host "║                                            ║" -ForegroundColor Green
-              Write-Host "║  SSH Server: $($parts[0])" -ForegroundColor Cyan
-              Write-Host "║  SSH Port:   $($parts[1])" -ForegroundColor Cyan
-              Write-Host "║  Username:   runneradmin" -ForegroundColor Yellow
-              Write-Host "║  Password:   $env:SSH_PASSWORD" -ForegroundColor Yellow
+              Write-Host "║  Server:   $($parts[0])" -ForegroundColor Cyan
+              Write-Host "║  Port:     $($parts[1])" -ForegroundColor Cyan
+              Write-Host "║                                            ║" -ForegroundColor Green
+              Write-Host "║  Password: $env:VNC_PASSWORD" -ForegroundColor Yellow
               Write-Host "║                                            ║" -ForegroundColor Green
               Write-Host "╚════════════════════════════════════════════╝" -ForegroundColor Green
               Write-Host ""
-              Write-Host "📋 HOW TO CONNECT:" -ForegroundColor White
+              Write-Host "📥 DOWNLOAD VNC VIEWER:" -ForegroundColor White
+              Write-Host "   https://www.tightvnc.com/download.php" -ForegroundColor Cyan
+              Write-Host "   OR" -ForegroundColor Gray
+              Write-Host "   https://www.realvnc.com/download/viewer/" -ForegroundColor Cyan
               Write-Host ""
-              Write-Host "STEP 1: Create SSH Tunnel" -ForegroundColor Yellow
-              Write-Host "  ssh -L 13389:localhost:3389 runneradmin@$($parts[0]) -p $($parts[1])" -ForegroundColor Cyan
-              Write-Host "  (Enter password: $env:SSH_PASSWORD)" -ForegroundColor Gray
-              Write-Host ""
-              Write-Host "STEP 2: Connect RDP (in new terminal)" -ForegroundColor Yellow
-              Write-Host "  mstsc /v:localhost:13389" -ForegroundColor Cyan
-              Write-Host "  (Enter password: $env:RDP_PASS)" -ForegroundColor Gray
-              Write-Host ""
-              Write-Host "💡 This tunnels RDP through SSH to bypass detection!" -ForegroundColor Green
+              Write-Host "🔌 TO CONNECT:" -ForegroundColor White
+              Write-Host "   1. Open VNC Viewer" -ForegroundColor Gray
+              Write-Host "   2. Enter: $($parts[0]):$($parts[1])" -ForegroundColor Gray
+              Write-Host "   3. Password: $env:VNC_PASSWORD" -ForegroundColor Gray
               Write-Host ""
               
+              $found = $true
               break
             }
           } catch {
+            Write-Host "  Attempt $i/10..." -ForegroundColor DarkGray
             Start-Sleep -Seconds 2
           }
+        }
+        
+        if (-not $found) {
+          Write-Host ""
+          Write-Host "⚠️  Manual: https://dashboard.ngrok.com/tunnels/agents" -ForegroundColor Yellow
+          Write-Host "Password: $env:VNC_PASSWORD" -ForegroundColor Cyan
         }
     
     - name: Keep Alive
@@ -135,21 +122,35 @@ jobs:
         
         $endTime = (Get-Date).AddSeconds($hours * 3600)
         
-        Write-Host "🔄 SSH+RDP session for $hours hours" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "🔄 VNC session active for $hours hours" -ForegroundColor Green
+        Write-Host "⏰ Stops at: $($endTime.ToString('HH:mm:ss'))" -ForegroundColor Cyan
         Write-Host ""
         
         $lastActivity = Get-Date
         
         while ((Get-Date) -lt $endTime) {
+          $now = Get-Date
+          
+          if ($now.Minute % 30 -eq 0 -and $now.Second -lt 30) {
+            $left = [math]::Round(($endTime - $now).TotalMinutes)
+            Write-Host "[$($now.ToString('HH:mm'))] Active - $left min left" -ForegroundColor DarkGray
+          }
+          
           if (($now - $lastActivity).TotalSeconds -ge 180) {
             1..50 | ForEach-Object { [math]::Sqrt($_) } | Out-Null
-            $lastActivity = Get-Date
+            $lastActivity = $now
           }
+          
           Start-Sleep -Seconds 30
         }
+        
+        Write-Host "⏱️ Session ended" -ForegroundColor Yellow
     
     - name: Cleanup
       if: always()
       shell: pwsh
       run: |
+        Write-Host "🧹 Cleanup..."
         Get-Process -Name "ngrok" -ErrorAction SilentlyContinue | Stop-Process -Force
+        Write-Host "✅ Done"
